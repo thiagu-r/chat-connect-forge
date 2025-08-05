@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { MessageCircle, FileText, GitBranch, Megaphone, Users } from 'lucide-react';
+import { MessageCircle, FileText, GitBranch, Megaphone, Users, LogOut } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/contexts/AuthContext';
+import { Button } from '@/components/ui/button';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -17,6 +19,12 @@ const menuItems = [
 ];
 
 export function Layout({ children, currentView, onViewChange }: LayoutProps) {
+  const { logout } = useAuth();
+
+  const handleLogout = () => {
+    logout();
+  };
+
   return (
     <div className="flex h-screen bg-background">
       {/* Sidebar */}
@@ -52,9 +60,18 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
         
         {/* Footer */}
         <div className="p-4 border-t border-sidebar-border">
-          <div className="text-sm text-muted-foreground">
+          <div className="text-sm text-muted-foreground mb-3">
             Connected to WhatsApp Business
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleLogout}
+            className="w-full"
+          >
+            <LogOut className="h-4 w-4 mr-2" />
+            Logout
+          </Button>
         </div>
       </div>
       
