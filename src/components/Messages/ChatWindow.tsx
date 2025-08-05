@@ -50,6 +50,75 @@ const getStatusTime = (message: Message) => {
   }
 };
 
+// Helper function to format date for grouping
+const formatDateForGrouping = (timestamp: string) => {
+  const date = new Date(timestamp);
+  const now = new Date();
+  
+  // Reset time to start of day for accurate comparison
+  const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const nowStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  
+  const diffTime = nowStart.getTime() - dateStart.getTime();
+  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+  
+  console.log('Date grouping debug:', {
+    timestamp,
+    date: date.toISOString(),
+    dateStart: dateStart.toISOString(),
+    nowStart: nowStart.toISOString(),
+    diffDays,
+    result: diffDays === 0 ? 'Today' : diffDays === 1 ? 'Yesterday' : 'Other'
+  });
+  
+  if (diffDays === 0) {
+    return 'Today';
+  } else if (diffDays === 1) {
+    return 'Yesterday';
+  } else if (diffDays <= 7) {
+    return date.toLocaleDateString('en-US', { weekday: 'long' });
+  } else {
+    return date.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric',
+      year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+    });
+  }
+};
+
+// Helper function to group messages by date
+const groupMessagesByDate = (messages: Message[]) => {
+  const groups: { [key: string]: Message[] } = {};
+  
+  messages.forEach(message => {
+    // Use created_at for more accurate date grouping
+    const dateKey = formatDateForGrouping(message.created_at);
+    
+    // Debug logging for date grouping
+    console.log('Message grouping:', {
+      id: message.id,
+      timestamp: message.timestamp,
+      created_at: message.created_at,
+      dateKey: dateKey,
+      content: message.content.substring(0, 20) + '...'
+    });
+    
+    if (!groups[dateKey]) {
+      groups[dateKey] = [];
+    }
+    groups[dateKey].push(message);
+  });
+  
+  // Sort messages within each group by created_at (oldest first)
+  Object.keys(groups).forEach(dateKey => {
+    groups[dateKey].sort((a, b) => 
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+  });
+  
+  return groups;
+};
+
 export function ChatWindow({ contactId, contactName = 'Select a contact', contactPhone, isOnline }: ChatWindowProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
@@ -103,9 +172,9 @@ export function ChatWindow({ contactId, contactName = 'Select a contact', contac
         console.log('Setting messages for page 1:', messagesArray.length);
         setMessages(messagesArray);
       } else {
-        console.log('Appending older messages for page', currentPage, ':', messagesArray.length);
-        // Append older messages to the end (they are already in chronological order)
-        setMessages(prev => [...prev, ...messagesArray]);
+        console.log('Prepending older messages for page', currentPage, ':', messagesArray.length);
+        // Prepend older messages to the beginning (they come first chronologically)
+        setMessages(prev => [...messagesArray, ...prev]);
       }
       setIsLoadingMore(false);
     }
@@ -125,36 +194,53 @@ export function ChatWindow({ contactId, contactName = 'Select a contact', contac
     if (currentPage === 1) {
       scrollToBottom();
     }
+    // For older messages (currentPage > 1), maintain scroll position
   }, [messages, currentPage]);
 
-  // Scroll to bottom when messages are loaded
+  // Scroll to bottom when initial messages are loaded
   useEffect(() => {
     if (messages.length > 0 && currentPage === 1) {
       scrollToBottom();
     }
+    // For older messages (currentPage > 1), scroll position is maintained automatically
   }, [messages.length, currentPage]);
 
-  // Handle scroll to load older messages
-  const handleScroll = () => {
-    if (!messagesContainerRef.current || !messagesData?.pagination || isLoadingMore) return;
-
-    const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
+  // Handle load older messages button click
+  const handleLoadOlderMessages = () => {
+    if (!messagesData?.pagination || isLoadingMore) return;
     
-    // Only load more if we have messages and user is near the top
-    if (messages.length > 0 && scrollTop < 100 && messagesData.pagination.has_previous) {
+    if (messagesData.pagination.has_next) {
       setIsLoadingMore(true);
       setCurrentPage(prev => prev + 1);
     }
   };
 
-  // Add scroll event listener
+  // Track scroll position for fallback button
+  const [showFallbackButton, setShowFallbackButton] = useState(false);
+
+  const handleScroll = () => {
+    if (!messagesContainerRef.current) return;
+    
+    const { scrollTop } = messagesContainerRef.current;
+    const shouldShowButton = scrollTop < 100; // Increased threshold for better UX
+    setShowFallbackButton(shouldShowButton);
+  };
+
+  // Add scroll listener for fallback button
   useEffect(() => {
     const scrollContainer = messagesContainerRef.current;
-    if (scrollContainer && messages.length > 0) {
+    
+    if (scrollContainer) {
       scrollContainer.addEventListener('scroll', handleScroll);
-      return () => scrollContainer.removeEventListener('scroll', handleScroll);
+      
+      // Check initial scroll position
+      handleScroll();
+      
+      return () => {
+        scrollContainer.removeEventListener('scroll', handleScroll);
+      };
     }
-  }, [messagesData?.pagination, isLoadingMore, messages.length]);
+  }, [messagesData]); // Re-run when messages data changes
 
   // Track previous contactId to detect actual changes
   const [prevContactId, setPrevContactId] = useState<number | undefined>();
@@ -249,6 +335,28 @@ export function ChatWindow({ contactId, contactName = 'Select a contact', contac
           </div>
         )}
 
+        {/* Load Old Messages Button - Only visible when scrolling to top */}
+        {showFallbackButton && messagesData?.pagination?.has_next && !isLoading && !error && (
+          <div className="flex justify-center p-2">
+            <Button
+              onClick={handleLoadOlderMessages}
+              disabled={isLoadingMore}
+              variant="ghost"
+              size="sm"
+              className="text-xs"
+            >
+              {isLoadingMore ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-900 mr-2"></div>
+                  Loading older messages...
+                </>
+              ) : (
+                'Load Old Messages'
+              )}
+            </Button>
+          </div>
+        )}
+
         {/* Loading indicator for older messages */}
         {isLoadingMore && (
           <div className="flex justify-center">
@@ -260,56 +368,104 @@ export function ChatWindow({ contactId, contactName = 'Select a contact', contac
             </div>
           </div>
         )}
+
+
         
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={cn(
-              "flex",
-              message.is_from_user ? "justify-start" : "justify-end"
-            )}
-          >
-            <div
-              className={cn(
-                "max-w-xs lg:max-w-md xl:max-w-lg px-4 py-2 rounded-lg",
-                message.is_from_user
-                  ? "bg-message-received text-foreground border border-border"
-                  : "bg-message-sent text-foreground"
-              )}
-            >
-              <div className="text-sm">
-                {message.message_type === 'text' && (
-                  <p>{message.content}</p>
-                )}
-                {message.message_type === 'template' && (
-                  <div>
-                    <p className="font-semibold text-xs mb-1">Template: {message.template_name}</p>
-                    <p>{message.content}</p>
-                  </div>
-                )}
-                {message.message_type === 'flow' && message.is_from_user && (
-                  <div>
-                    <p className="font-semibold text-xs mb-1">Flow Response</p>
-                    <p>{message.content}</p>
-                    {message.flow_responses.length > 0 && (
-                      <div className="mt-2 p-2 bg-gray-100 rounded text-xs">
-                        <p className="font-semibold">{message.flow_responses[0].flow_name}</p>
-                        <p>{message.flow_responses[0].screen_title}</p>
-                      </div>
+        {(() => {
+          const groupedMessages = groupMessagesByDate(messages);
+          
+          // Sort date groups in chronological order (oldest first)
+          const sortedDateKeys = Object.keys(groupedMessages).sort((a, b) => {
+            // Convert date keys back to actual dates for comparison
+            const getDateFromKey = (key: string) => {
+              if (key === 'Today') return new Date();
+              if (key === 'Yesterday') {
+                const yesterday = new Date();
+                yesterday.setDate(yesterday.getDate() - 1);
+                return yesterday;
+              }
+              // For weekday names, find the most recent occurrence
+              const now = new Date();
+              const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+              const dayIndex = dayNames.indexOf(key);
+              if (dayIndex !== -1) {
+                const daysSince = (now.getDay() - dayIndex + 7) % 7;
+                const targetDate = new Date();
+                targetDate.setDate(now.getDate() - daysSince);
+                return targetDate;
+              }
+              // For other dates, try to parse them
+              return new Date(key);
+            };
+            
+            return getDateFromKey(a).getTime() - getDateFromKey(b).getTime();
+          });
+          
+          return sortedDateKeys.map((dateKey) => {
+            const dateMessages = groupedMessages[dateKey];
+            return (
+            <div key={dateKey} className="space-y-4">
+              {/* Date Header */}
+              <div className="flex justify-center">
+                <div className="bg-muted/50 text-muted-foreground text-xs px-3 py-1 rounded-full">
+                  {dateKey}
+                </div>
+              </div>
+              
+              {/* Messages for this date */}
+              {dateMessages.map((message) => (
+                <div
+                  key={message.id}
+                  className={cn(
+                    "flex",
+                    message.is_from_user ? "justify-start" : "justify-end"
+                  )}
+                >
+                  <div
+                    className={cn(
+                      "max-w-xs lg:max-w-md xl:max-w-lg px-4 py-2 rounded-lg",
+                      message.is_from_user
+                        ? "bg-message-received text-foreground border border-border"
+                        : "bg-message-sent text-foreground"
                     )}
+                  >
+                    <div className="text-sm">
+                      {message.message_type === 'text' && (
+                        <p>{message.content}</p>
+                      )}
+                      {message.message_type === 'template' && (
+                        <div>
+                          <p className="font-semibold text-xs mb-1">Template: {message.template_name}</p>
+                          <p>{message.content}</p>
+                        </div>
+                      )}
+                      {message.message_type === 'flow' && message.is_from_user && (
+                        <div>
+                          <p className="font-semibold text-xs mb-1">Flow Response</p>
+                          <p>{message.content}</p>
+                          {message.flow_responses.length > 0 && (
+                            <div className="mt-2 p-2 bg-gray-100 rounded text-xs">
+                              <p className="font-semibold">{message.flow_responses[0].flow_name}</p>
+                              <p>{message.flow_responses[0].screen_title}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {message.message_type === 'flow' && !message.is_from_user && (
+                        <p>{message.content}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-end gap-1 mt-1">
+                      <span className="text-xs text-muted-foreground">{getStatusTime(message)}</span>
+                      {getStatusIcon(message.status, message.is_from_user)}
+                    </div>
                   </div>
-                )}
-                {message.message_type === 'flow' && !message.is_from_user && (
-                  <p>{message.content}</p>
-                )}
-              </div>
-              <div className="flex items-center justify-end gap-1 mt-1">
-                <span className="text-xs text-muted-foreground">{getStatusTime(message)}</span>
-                {getStatusIcon(message.status, message.is_from_user)}
-              </div>
+                </div>
+              ))}
             </div>
-          </div>
-        ))}
+          );
+        });
+        })()}
         
         {/* Show no messages only if we have no messages and are not loading */}
         {messages.length === 0 && !isLoading && !error && (
@@ -360,3 +516,5 @@ export function ChatWindow({ contactId, contactName = 'Select a contact', contac
     </div>
   );
 }
+
+export default ChatWindow;
