@@ -67,6 +67,9 @@ export function ContactList({ contacts = mockContacts, selectedContactId, onCont
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
+  // Debug logging for contacts
+  console.log('ContactList: Received contacts:', contacts.length, contacts);
+
   const filteredContacts = contacts.filter(contact =>
     contact.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     contact.phone_number.includes(searchTerm)

@@ -32,6 +32,16 @@ export interface TemplateComponent {
   }>;
 }
 
+export interface ReplyToInfo {
+  id: number;
+  content: string;
+  message_type: string;
+  is_from_user: boolean;
+  timestamp: string;
+  contact_name: string;
+  contact_phone: string;
+}
+
 export interface Message {
   id: number;
   contact_name: string;
@@ -39,6 +49,7 @@ export interface Message {
   flow_responses: FlowResponse[];
   template_name: string | null;
   template_components: TemplateComponent[] | null;
+  reply_to_info: ReplyToInfo | null;
   message_id: string;
   content: string;
   message_type: 'text' | 'template' | 'flow';

@@ -3,15 +3,26 @@ export interface LastMessage {
   timestamp: string;
   status: 'sent' | 'delivered' | 'read' | 'failed' | 'sending';
   is_from_user: boolean;
+  message_type?: string;
+  delivered_at?: string | null;
+  read_at?: string | null;
 }
 
 export interface Contact {
   id: number;
   name: string;
   phone_number: string;
-  country_code: string | null;
+  country_code: string;
   unread_count: number;
   last_message: LastMessage;
+  profile_picture: string | null;
+  lables: string[];
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  is_blocked: boolean;
+  last_seen: string;
+  iu_id: string | null;
 }
 
 export interface Pagination {
