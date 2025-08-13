@@ -1,12 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Paperclip, Smile, MoreVertical, Phone, Video, Check, CheckCheck } from 'lucide-react';
+import { Send, Paperclip, Smile, MoreVertical, Phone, Video, Check, CheckCheck, ChevronDown } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { useApi } from '@/hooks/useApi';
 import { MESSAGES_ENDPOINTS, MessagesResponse, Message, ReplyToInfo } from '@/lib/messages';
 import { useWebSocket } from '@/contexts/WebSocketContext';
+import { sendTextMessage } from '@/lib/api';
+import { TemplateSelector } from './TemplateSelector';
 
 interface ChatWindowProps {
   contactId?: number;
@@ -48,11 +51,12 @@ const getStatusTime = (message: Message) => {
 
 // Helper function to format message content with newlines
 const formatMessageContent = (content: string) => {
-  return content.split('\n').map((line, index) => (
-    <React.Fragment key={index}>
+  const lines = content.split('\n');
+  return lines.map((line, index) => (
+    <span key={index}>
       {line}
-      {index < content.split('\n').length - 1 && <br />}
-    </React.Fragment>
+      {index < lines.length - 1 && <br />}
+    </span>
   ));
 };
 
@@ -94,16 +98,17 @@ const formatDateForGrouping = (timestamp: string) => {
   const diffTime = nowStart.getTime() - dateStart.getTime();
   const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
   
-  console.log('Date grouping debug:', {
-    timestamp,
-    date: date.toISOString(),
-    dateLocal: `${dateYear}-${dateMonth + 1}-${dateDay}`,
-    nowLocal: `${nowYear}-${nowMonth + 1}-${nowDay}`,
-    dateStart: dateStart.toISOString(),
-    nowStart: nowStart.toISOString(),
-    diffDays,
-    result: diffDays === 0 ? 'Today' : diffDays === 1 ? 'Yesterday' : diffDays <= 7 ? date.toLocaleDateString('en-US', { weekday: 'long' }) : 'Other'
-  });
+  // Only log date grouping for debugging specific issues
+  // console.log('Date grouping debug:', {
+  //   timestamp,
+  //   date: date.toISOString(),
+  //   dateLocal: `${dateYear}-${dateMonth + 1}-${dateDay}`,
+  //   nowLocal: `${nowYear}-${nowMonth + 1}-${nowDay}`,
+  //   dateStart: dateStart.toISOString(),
+  //   nowStart: nowStart.toISOString(),
+  //   diffDays,
+  //   result: diffDays === 0 ? 'Today' : diffDays === 1 ? 'Yesterday' : diffDays <= 7 ? date.toLocaleDateString('en-US', { weekday: 'long' }) : 'Other'
+  // });
   
   if (diffDays === 0) {
     return 'Today';
@@ -124,17 +129,17 @@ const formatDateForGrouping = (timestamp: string) => {
 const groupMessagesByDate = (messages: Message[]) => {
   const groups: { [key: string]: Message[] } = {};
   
-  console.log('Grouping messages by date:', messages.length, 'messages');
+  // console.log('Grouping messages by date:', messages.length, 'messages');
   
   messages.forEach(message => {
     // Use timestamp for more accurate date grouping
     const dateKey = formatDateForGrouping(message.timestamp);
-    console.log('Message grouping:', {
-      id: message.id,
-      content: message.content.substring(0, 20),
-      timestamp: message.timestamp,
-      dateKey: dateKey
-    });
+    // console.log('Message grouping:', {
+    //   id: message.id,
+    //   content: message.content.substring(0, 20),
+    //   timestamp: message.timestamp,
+    //   dateKey: dateKey
+    // });
     
     if (!groups[dateKey]) {
       groups[dateKey] = [];
@@ -147,7 +152,7 @@ const groupMessagesByDate = (messages: Message[]) => {
     groups[dateKey].sort((a, b) => 
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
-    console.log(`Messages in group "${dateKey}":`, groups[dateKey].length);
+    // console.log(`Messages in group "${dateKey}":`, groups[dateKey].length);
   });
   
   return groups;
@@ -158,6 +163,9 @@ export function ChatWindow({ contactId, contactName = 'Select a contact', contac
   const [newMessage, setNewMessage] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [messageType, setMessageType] = useState<'text' | 'template'>('text');
+  const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const { useAuthenticatedQuery } = useApi();
@@ -249,72 +257,96 @@ export function ChatWindow({ contactId, contactName = 'Select a contact', contac
 
   // WebSocket event listeners for real-time updates
   useEffect(() => {
+    console.log('Setting up WebSocket event listeners for contact:', contactId);
+    
     const handleNewMessage = (event: CustomEvent) => {
+      console.log('WebSocket: New message event received:', event.detail);
       const data = event.detail;
       if (data.contact_id === contactId) {
-        // Add new message to the end of the list
-        const newMessage: Message = {
-          id: Date.now(), // Temporary ID
-          contact_name: data.contact_name || '',
-          contact_phone: data.phone_number || '',
-          flow_responses: [],
-          template_name: null,
-          template_components: null,
-          reply_to_info: null,
-          message_id: data.message_id || '',
-          content: data.content || '',
-          message_type: data.message_type || 'text',
-          is_from_user: data.is_from_user || false,
-          status: data.status || 'sent',
-          timestamp: data.timestamp || '',
-          delivered_at: data.delivered_at,
-          read_at: data.read_at,
-          media_url: data.media_url || '',
-          metadata: {},
-          created_at: data.timestamp || '',
-          iu_id: null,
-          contact: contactId || 0,
-          reply_to: null,
-          template: null,
-          flow: null,
-        };
+        // Check if message already exists to prevent duplicates
+        setMessages(prev => {
+          const messageExists = prev.some(msg => msg.message_id === data.message_id);
+          if (messageExists) {
+            console.log('Message already exists, skipping duplicate:', data.message_id);
+            return prev; // Return previous state unchanged
+          }
 
-        setMessages(prev => [...prev, newMessage]);
+          // Add new message to the end of the list
+          const newMessage: Message = {
+            id: Date.now(), // Temporary ID
+            contact_name: data.contact_name || '',
+            contact_phone: data.phone_number || '',
+            flow_responses: [],
+            template_name: null,
+            template_components: null,
+            reply_to_info: null,
+            message_id: data.message_id || '',
+            content: data.content || '',
+            message_type: data.message_type || 'text',
+            is_from_user: data.is_from_user || false,
+            status: data.status || 'sent',
+            timestamp: data.timestamp || '',
+            delivered_at: data.delivered_at,
+            read_at: data.read_at,
+            media_url: data.media_url || '',
+            metadata: {},
+            created_at: data.timestamp || '',
+            iu_id: null,
+            contact: contactId || 0,
+            reply_to: null,
+            template: null,
+            flow: null,
+          };
+
+          console.log('Adding new message from WebSocket:', newMessage.message_id);
+          return [...prev, newMessage];
+        });
         scrollToBottom();
       }
     };
 
     const handleNewMessageForSelectedContact = (event: CustomEvent) => {
+      console.log('WebSocket: New message for selected contact event received:', event.detail);
       const data = event.detail;
       if (data.contact_id === contactId) {
-        // Add new message to the end of the list
-        const newMessage: Message = {
-          id: Date.now(), // Temporary ID
-          contact_name: data.contact_name || '',
-          contact_phone: data.phone_number || '',
-          flow_responses: [],
-          template_name: null,
-          template_components: null,
-          reply_to_info: null,
-          message_id: data.message_id || '',
-          content: data.content || '',
-          message_type: data.message_type || 'text',
-          is_from_user: data.is_from_user || false,
-          status: data.status || 'sent',
-          timestamp: data.timestamp || '',
-          delivered_at: data.delivered_at,
-          read_at: data.read_at,
-          media_url: data.media_url || '',
-          metadata: {},
-          created_at: data.timestamp || '',
-          iu_id: null,
-          contact: contactId || 0,
-          reply_to: null,
-          template: null,
-          flow: null,
-        };
+        // Check if message already exists to prevent duplicates
+        setMessages(prev => {
+          const messageExists = prev.some(msg => msg.message_id === data.message_id);
+          if (messageExists) {
+            console.log('Message already exists, skipping duplicate:', data.message_id);
+            return prev; // Return previous state unchanged
+          }
 
-        setMessages(prev => [...prev, newMessage]);
+          // Add new message to the end of the list
+          const newMessage: Message = {
+            id: Date.now(), // Temporary ID
+            contact_name: data.contact_name || '',
+            contact_phone: data.phone_number || '',
+            flow_responses: [],
+            template_name: null,
+            template_components: null,
+            reply_to_info: null,
+            message_id: data.message_id || '',
+            content: data.content || '',
+            message_type: data.message_type || 'text',
+            is_from_user: data.is_from_user || false,
+            status: data.status || 'sent',
+            timestamp: data.timestamp || '',
+            delivered_at: data.delivered_at,
+            read_at: data.read_at,
+            media_url: data.media_url || '',
+            metadata: {},
+            created_at: data.timestamp || '',
+            iu_id: null,
+            contact: contactId || 0,
+            reply_to: null,
+            template: null,
+            flow: null,
+          };
+
+          console.log('Adding new message for selected contact:', newMessage.message_id);
+          return [...prev, newMessage];
+        });
         
         // Show "New Message" notification
         setShowNewMessageNotification(true);
@@ -329,32 +361,43 @@ export function ChatWindow({ contactId, contactName = 'Select a contact', contac
     };
 
     const handleMessageStatusUpdate = (event: CustomEvent) => {
+      console.log('WebSocket: Message status update event received:', event.detail);
       const data = event.detail;
       if (data.contact_id === contactId) {
+        console.log('Updating message status for message_id:', data.message_id, 'new status:', data.status);
         // Update message status
-        setMessages(prev => prev.map(message => {
-          if (message.message_id === data.message_id) {
-            return {
-              ...message,
-              status: data.status || message.status,
-              delivered_at: data.delivered_at,
-              read_at: data.read_at,
-            };
-          }
-          return message;
-        }));
+        setMessages(prev => {
+          const updated = prev.map(message => {
+            if (message.message_id === data.message_id) {
+              console.log('Found message to update:', message.id, 'old status:', message.status, 'new status:', data.status);
+              return {
+                ...message,
+                status: data.status || message.status,
+                delivered_at: data.delivered_at,
+                read_at: data.read_at,
+              };
+            }
+            return message;
+          });
+          console.log('Updated messages count:', updated.length);
+          return updated;
+        });
       }
     };
 
     // Add event listeners
+    console.log('Adding WebSocket event listeners...');
     window.addEventListener('newMessage', handleNewMessage as EventListener);
     window.addEventListener('newMessageForSelectedContact', handleNewMessageForSelectedContact as EventListener);
     window.addEventListener('messageStatusUpdate', handleMessageStatusUpdate as EventListener);
+    console.log('WebSocket event listeners added successfully');
 
     return () => {
+      console.log('Removing WebSocket event listeners...');
       window.removeEventListener('newMessage', handleNewMessage as EventListener);
       window.removeEventListener('newMessageForSelectedContact', handleNewMessageForSelectedContact as EventListener);
       window.removeEventListener('messageStatusUpdate', handleMessageStatusUpdate as EventListener);
+      console.log('WebSocket event listeners removed');
     };
   }, [contactId]);
 
@@ -411,12 +454,103 @@ export function ChatWindow({ contactId, contactName = 'Select a contact', contac
     }
   }, [contactId]);
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!newMessage.trim() || !contactId) return;
 
-    // TODO: Implement send message API call
-    console.log('Sending message:', newMessage);
-    setNewMessage('');
+    setIsSendingMessage(true);
+    
+    try {
+      const response = await sendTextMessage(contactId, newMessage.trim());
+      console.log('Message sent successfully:', response);
+      
+      // Add the sent message to the messages list
+      const sentMessage: Message = {
+        id: response.id,
+        contact_name: response.contact_name,
+        contact_phone: response.contact_phone,
+        flow_responses: response.flow_responses || [],
+        template_name: response.template_name,
+        template_components: response.template_components,
+        reply_to_info: response.reply_to_info,
+        message_id: response.message_id,
+        content: response.content,
+        message_type: response.message_type,
+        is_from_user: response.is_from_user,
+        status: response.status,
+        timestamp: response.timestamp,
+        delivered_at: response.delivered_at,
+        read_at: response.read_at,
+        media_url: response.media_url,
+        metadata: response.metadata,
+        created_at: response.created_at,
+        iu_id: response.iu_id,
+        contact: response.contact,
+        reply_to: response.reply_to,
+        template: response.template,
+        flow: response.flow,
+      };
+
+      console.log('Adding sent message to chat:', sentMessage.message_id);
+      setMessages(prev => {
+        // Check if message already exists to prevent duplicates
+        const messageExists = prev.some(msg => msg.message_id === sentMessage.message_id);
+        if (messageExists) {
+          console.log('Sent message already exists, skipping duplicate:', sentMessage.message_id);
+          return prev;
+        }
+        return [...prev, sentMessage];
+      });
+      setNewMessage('');
+      scrollToBottom();
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      // TODO: Show error toast/notification
+    } finally {
+      setIsSendingMessage(false);
+    }
+  };
+
+  const handleTemplateMessageSent = (response: Message) => {
+    console.log('Template message sent successfully:', response);
+    
+    // Add the sent template message to the messages list
+    const sentMessage: Message = {
+      id: response.id,
+      contact_name: response.contact_name,
+      contact_phone: response.contact_phone,
+      flow_responses: response.flow_responses || [],
+      template_name: response.template_name,
+      template_components: response.template_components,
+      reply_to_info: response.reply_to_info,
+      message_id: response.message_id,
+      content: response.content,
+      message_type: response.message_type,
+      is_from_user: response.is_from_user,
+      status: response.status,
+      timestamp: response.timestamp,
+      delivered_at: response.delivered_at,
+      read_at: response.read_at,
+      media_url: response.media_url,
+      metadata: response.metadata,
+      created_at: response.created_at,
+      iu_id: response.iu_id,
+      contact: response.contact,
+      reply_to: response.reply_to,
+      template: response.template,
+      flow: response.flow,
+    };
+
+    console.log('Adding sent template message to chat:', sentMessage.message_id);
+    setMessages(prev => {
+      // Check if message already exists to prevent duplicates
+      const messageExists = prev.some(msg => msg.message_id === sentMessage.message_id);
+      if (messageExists) {
+        console.log('Sent template message already exists, skipping duplicate:', sentMessage.message_id);
+        return prev;
+      }
+      return [...prev, sentMessage];
+    });
+    scrollToBottom();
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -535,7 +669,7 @@ export function ChatWindow({ contactId, contactName = 'Select a contact', contac
         
         {(() => {
           const groupedMessages = groupMessagesByDate(messages);
-          console.log('Grouped messages:', groupedMessages);
+          // console.log('Grouped messages:', groupedMessages);
           
           // Sort date groups in chronological order (oldest first)
           const sortedDateKeys = Object.keys(groupedMessages).sort((a, b) => {
@@ -653,35 +787,73 @@ export function ChatWindow({ contactId, contactName = 'Select a contact', contac
 
       {/* Message Input */}
       <div className="p-4 bg-background border-t border-border">
+        {/* Message Type Selector */}
+        <div className="flex items-center gap-2 mb-2">
+          <Select value={messageType} onValueChange={(value: 'text' | 'template') => setMessageType(value)}>
+            <SelectTrigger className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="text">Text Message</SelectItem>
+              <SelectItem value="template">Template</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon">
             <Paperclip className="h-5 w-5" />
           </Button>
           
-          <div className="flex-1 flex items-center bg-input border border-border rounded-lg">
-            <input
-              type="text"
-              placeholder="Type a message..."
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              onKeyPress={handleKeyPress}
-              className="flex-1 px-3 py-2 bg-transparent border-none focus:outline-none"
-            />
-            <Button variant="ghost" size="icon">
-              <Smile className="h-5 w-5" />
-            </Button>
-          </div>
+          {messageType === 'text' ? (
+            <div className="flex-1 flex items-center bg-input border border-border rounded-lg">
+              <input
+                type="text"
+                placeholder="Type a message..."
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                onKeyPress={handleKeyPress}
+                className="flex-1 px-3 py-2 bg-transparent border-none focus:outline-none"
+              />
+              <Button variant="ghost" size="icon">
+                <Smile className="h-5 w-5" />
+              </Button>
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center">
+              <Button 
+                onClick={() => setShowTemplateSelector(true)}
+                variant="outline" 
+                className="flex-1 justify-start text-left"
+              >
+                Select Template...
+              </Button>
+            </div>
+          )}
           
           <Button
             onClick={handleSendMessage}
-            disabled={!newMessage.trim()}
+            disabled={(messageType === 'text' && !newMessage.trim()) || isSendingMessage}
             className="bg-whatsapp-green hover:bg-whatsapp-green-hover text-white"
             size="icon"
           >
-            <Send className="h-5 w-5" />
+            {isSendingMessage ? (
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+            ) : (
+              <Send className="h-5 w-5" />
+            )}
           </Button>
         </div>
       </div>
+
+      {/* Template Selector Modal */}
+      {showTemplateSelector && contactId && (
+        <TemplateSelector
+          contactId={contactId}
+          onClose={() => setShowTemplateSelector(false)}
+          onMessageSent={handleTemplateMessageSent}
+        />
+      )}
     </div>
   );
 }

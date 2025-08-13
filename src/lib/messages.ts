@@ -115,4 +115,18 @@ export const MESSAGES_ENDPOINTS = {
   GET_MESSAGES: (contactId: number, page: number = 1, pageSize: number = 10) => 
     `/contacts/${contactId}/messages/?page_size=${pageSize}&page=${page}`,
   SEND_MESSAGE: (contactId: number) => `/contacts/${contactId}/messages/`,
-} as const; 
+  SEND_TEXT_MESSAGE: '/templates/send_text_to_contact/',
+  SEND_TEMPLATE_MESSAGE: '/templates/send_template_to_contact/',
+} as const;
+
+// Request interfaces for sending messages
+export interface SendTextMessageRequest {
+  contact_id: number;
+  content: string;
+}
+
+export interface SendTemplateMessageRequest {
+  contact_id: number;
+  template_id: number;
+  parameters?: Record<string, any>;
+} 

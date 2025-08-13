@@ -87,8 +87,12 @@ class WebSocketService {
     });
 
     if (data.event_type === 'message_status_update') {
-      // Check if this is actually a new message with status update
-      if (data.contact_id && data.message_id && data.content) {
+      // Check if this is a status update for an existing message
+      if (data.contact_id && data.message_id && (data.delivered_at || data.read_at)) {
+        // This is a status update for an existing message
+        console.log('Treating as message status update only');
+        this.callbacks.onMessageStatusUpdate?.(data);
+      } else if (data.contact_id && data.message_id && data.content) {
         // This is a new message that also includes status info
         console.log('Treating message_status_update as new message');
         this.callbacks.onNewMessage?.(data);
