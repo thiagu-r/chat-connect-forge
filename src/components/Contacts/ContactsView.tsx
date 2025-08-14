@@ -1,11 +1,13 @@
-import { useState } from 'react';
-import { Plus, Eye, Edit, Trash2, Phone, MessageCircle, Search } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Plus, Eye, Edit, Trash2, Phone, MessageCircle, Search, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { fetchContactsList, fetchContactDetail, SimpleContact, DetailedContact } from '@/lib/contacts';
+import { useToast } from '@/hooks/use-toast';
 
 interface Contact {
   id: string;
@@ -74,11 +76,16 @@ const mockContacts: Contact[] = [
 ];
 
 export function ContactsView() {
-  const [contacts, setContacts] = useState<Contact[]>(mockContacts);
-  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [contacts, setContacts] = useState<SimpleContact[]>([]);
+  const [selectedContact, setSelectedContact] = useState<DetailedContact | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const { toast } = useToast();
   
   const [newContact, setNewContact] = useState({
     name: '',
@@ -88,47 +95,94 @@ export function ContactsView() {
     notes: '',
   });
 
-  const getStatusColor = (status: Contact['status']) => {
-    switch (status) {
-      case 'Active':
-        return 'bg-whatsapp-green hover:bg-whatsapp-green';
-      case 'Inactive':
-        return 'bg-yellow-500 hover:bg-yellow-500';
-      case 'Blocked':
-        return 'bg-destructive hover:bg-destructive';
-      default:
-        return 'bg-secondary hover:bg-secondary';
+  const fetchContacts = useCallback(async () => {
+    try {
+      setLoading(true);
+      const response = await fetchContactsList(currentPage, 20);
+      setContacts(response.contacts);
+      setTotalPages(response.pagination.total_pages);
+    } catch (error) {
+      console.error('Error fetching contacts:', error);
+      toast({
+        title: "Error",
+        description: "Failed to fetch contacts. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
     }
+  }, [currentPage, toast]);
+
+  // Fetch contacts on component mount and when page changes
+  useEffect(() => {
+    fetchContacts();
+  }, [fetchContacts]);
+
+  const getStatusColor = (isBlocked: boolean) => {
+    if (isBlocked) {
+      return 'bg-destructive hover:bg-destructive';
+    }
+    return 'bg-whatsapp-green hover:bg-whatsapp-green';
+  };
+
+  const getStatusText = (isBlocked: boolean) => {
+    return isBlocked ? 'Blocked' : 'Active';
+  };
+
+  const formatLastSeen = (lastSeen: string | null) => {
+    if (!lastSeen) return 'Never';
+    
+    const now = new Date();
+    const lastSeenDate = new Date(lastSeen);
+    const diffInMinutes = Math.floor((now.getTime() - lastSeenDate.getTime()) / (1000 * 60));
+    
+    if (diffInMinutes < 1) return 'Just now';
+    if (diffInMinutes < 60) return `${diffInMinutes} minutes ago`;
+    if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)} hours ago`;
+    if (diffInMinutes < 10080) return `${Math.floor(diffInMinutes / 1440)} days ago`;
+    return `${Math.floor(diffInMinutes / 10080)} weeks ago`;
+  };
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString();
   };
 
   const filteredContacts = contacts.filter(contact =>
     contact.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    contact.phone.includes(searchTerm) ||
-    contact.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    contact.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase()))
+    contact.phone_number.includes(searchTerm) ||
+    (contact.country_code && contact.country_code.includes(searchTerm))
   );
 
   const handleCreateContact = () => {
-    const contact: Contact = {
-      id: Date.now().toString(),
-      name: newContact.name,
-      phone: newContact.phone,
-      email: newContact.email || undefined,
-      tags: newContact.tags.split(',').map(tag => tag.trim()).filter(Boolean),
-      status: 'Active',
-      lastSeen: 'Just now',
-      createdAt: new Date().toISOString().split('T')[0],
-      notes: newContact.notes || undefined,
-    };
-    
-    setContacts(prev => [contact, ...prev]);
+    // TODO: Implement create contact API call
+    toast({
+      title: "Not Implemented",
+      description: "Create contact functionality will be implemented soon.",
+    });
     setNewContact({ name: '', phone: '', email: '', tags: '', notes: '' });
     setIsCreateDialogOpen(false);
   };
 
-  const handleViewContact = (contact: Contact) => {
-    setSelectedContact(contact);
-    setIsViewDialogOpen(true);
+  const handleViewContact = async (contact: SimpleContact) => {
+    try {
+      setLoadingDetail(true);
+      const detailedContact = await fetchContactDetail(contact.id);
+      setSelectedContact(detailedContact);
+      setIsViewDialogOpen(true);
+    } catch (error) {
+      console.error('Error fetching contact details:', error);
+      toast({
+        title: "Error",
+        description: "Failed to fetch contact details. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingDetail(false);
+    }
+  };
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
   };
 
   return (
@@ -222,7 +276,7 @@ export function ContactsView() {
         <div className="mt-4 relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search contacts by name, phone, email, or tags..."
+            placeholder="Search contacts by name, phone, or country code..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="pl-10"
@@ -233,83 +287,118 @@ export function ContactsView() {
       {/* Contacts Table */}
       <div className="flex-1 overflow-auto p-6">
         <div className="bg-card rounded-lg border border-border overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-muted">
-                <tr>
-                  <th className="text-left p-4 font-medium text-muted-foreground">Contact</th>
-                  <th className="text-left p-4 font-medium text-muted-foreground">Phone</th>
-                  <th className="text-left p-4 font-medium text-muted-foreground">Email</th>
-                  <th className="text-left p-4 font-medium text-muted-foreground">Tags</th>
-                  <th className="text-left p-4 font-medium text-muted-foreground">Status</th>
-                  <th className="text-left p-4 font-medium text-muted-foreground">Last Seen</th>
-                  <th className="text-center p-4 font-medium text-muted-foreground">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredContacts.map((contact, index) => (
-                  <tr
-                    key={contact.id}
-                    className={`border-b border-border ${index % 2 === 0 ? 'bg-background' : 'bg-muted/30'}`}
-                  >
-                    <td className="p-4">
-                      <div className="flex items-center gap-3">
-                        <Avatar className="h-10 w-10">
-                          <AvatarFallback className="bg-whatsapp-green text-white">
-                            {contact.name.split(' ').map(n => n[0]).join('')}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <div className="font-medium text-foreground">{contact.name}</div>
-                          <div className="text-sm text-muted-foreground">ID: {contact.id}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="p-4 text-muted-foreground font-mono">{contact.phone}</td>
-                    <td className="p-4 text-muted-foreground">{contact.email || '-'}</td>
-                    <td className="p-4">
-                      <div className="flex flex-wrap gap-1">
-                        {contact.tags.map(tag => (
-                          <Badge key={tag} variant="outline" className="text-xs">
-                            {tag}
+          {loading ? (
+            <div className="flex items-center justify-center p-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              <span className="ml-2 text-muted-foreground">Loading contacts...</span>
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-muted">
+                    <tr>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Contact</th>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Phone</th>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Country Code</th>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Status</th>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Last Seen</th>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Created</th>
+                      <th className="text-center p-4 font-medium text-muted-foreground">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredContacts.map((contact, index) => (
+                      <tr
+                        key={contact.id}
+                        className={`border-b border-border ${index % 2 === 0 ? 'bg-background' : 'bg-muted/30'}`}
+                      >
+                        <td className="p-4">
+                          <div className="flex items-center gap-3">
+                            <Avatar className="h-10 w-10">
+                              <AvatarFallback className="bg-whatsapp-green text-white">
+                                {contact.name ? contact.name.split(' ').map(n => n[0]).join('') : '?'}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <div className="font-medium text-foreground">
+                                {contact.name || 'Unknown'}
+                              </div>
+                              <div className="text-sm text-muted-foreground">ID: {contact.id}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-4 text-muted-foreground font-mono">{contact.phone_number}</td>
+                        <td className="p-4 text-muted-foreground">{contact.country_code || '-'}</td>
+                        <td className="p-4">
+                          <Badge className={`${getStatusColor(contact.is_blocked)} text-white`}>
+                            {getStatusText(contact.is_blocked)}
                           </Badge>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="p-4">
-                      <Badge className={`${getStatusColor(contact.status)} text-white`}>
-                        {contact.status}
-                      </Badge>
-                    </td>
-                    <td className="p-4 text-muted-foreground">{contact.lastSeen}</td>
-                    <td className="p-4">
-                      <div className="flex justify-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleViewContact(contact)}
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon">
-                          <MessageCircle className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon">
-                          <Phone className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon">
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                        <td className="p-4 text-muted-foreground">{formatLastSeen(contact.last_seen)}</td>
+                        <td className="p-4 text-muted-foreground">{formatDate(contact.created_at)}</td>
+                        <td className="p-4">
+                          <div className="flex justify-center gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleViewContact(contact)}
+                              disabled={loadingDetail}
+                            >
+                              {loadingDetail ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Eye className="h-4 w-4" />
+                              )}
+                            </Button>
+                            <Button variant="ghost" size="icon">
+                              <MessageCircle className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon">
+                              <Phone className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon">
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon">
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between p-4 border-t border-border">
+                  <div className="text-sm text-muted-foreground">
+                    Page {currentPage} of {totalPages}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handlePageChange(currentPage - 1)}
+                      disabled={currentPage === 1}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handlePageChange(currentPage + 1)}
+                      disabled={currentPage === totalPages}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
 
@@ -320,10 +409,10 @@ export function ContactsView() {
             <DialogTitle className="flex items-center gap-3">
               <Avatar className="h-12 w-12">
                 <AvatarFallback className="bg-whatsapp-green text-white">
-                  {selectedContact?.name.split(' ').map(n => n[0]).join('')}
+                  {selectedContact?.name ? selectedContact.name.split(' ').map(n => n[0]).join('') : '?'}
                 </AvatarFallback>
               </Avatar>
-              {selectedContact?.name}
+              {selectedContact?.name || 'Unknown Contact'}
             </DialogTitle>
           </DialogHeader>
           {selectedContact && (
@@ -331,27 +420,27 @@ export function ContactsView() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>Phone Number</Label>
-                  <p className="text-muted-foreground font-mono">{selectedContact.phone}</p>
+                  <p className="text-muted-foreground font-mono">{selectedContact.phone_number}</p>
                 </div>
                 <div>
-                  <Label>Email</Label>
-                  <p className="text-muted-foreground">{selectedContact.email || 'Not provided'}</p>
+                  <Label>Country Code</Label>
+                  <p className="text-muted-foreground">{selectedContact.country_code || 'Not specified'}</p>
                 </div>
                 <div>
                   <Label>Status</Label>
                   <div className="mt-1">
-                    <Badge className={`${getStatusColor(selectedContact.status)} text-white`}>
-                      {selectedContact.status}
+                    <Badge className={`${getStatusColor(selectedContact.is_blocked)} text-white`}>
+                      {getStatusText(selectedContact.is_blocked)}
                     </Badge>
                   </div>
                 </div>
                 <div>
                   <Label>Last Seen</Label>
-                  <p className="text-muted-foreground">{selectedContact.lastSeen}</p>
+                  <p className="text-muted-foreground">{formatLastSeen(selectedContact.last_seen)}</p>
                 </div>
                 <div>
                   <Label>Member Since</Label>
-                  <p className="text-muted-foreground">{selectedContact.createdAt}</p>
+                  <p className="text-muted-foreground">{formatDate(selectedContact.created_at)}</p>
                 </div>
                 <div>
                   <Label>Contact ID</Label>
@@ -359,13 +448,17 @@ export function ContactsView() {
                 </div>
               </div>
               <div>
-                <Label>Tags</Label>
+                <Label>Labels</Label>
                 <div className="flex flex-wrap gap-2 mt-2">
-                  {selectedContact.tags.map(tag => (
-                    <Badge key={tag} variant="outline">
-                      {tag}
-                    </Badge>
-                  ))}
+                  {selectedContact.lables.length > 0 ? (
+                    selectedContact.lables.map(label => (
+                      <Badge key={label} variant="outline">
+                        {label}
+                      </Badge>
+                    ))
+                  ) : (
+                    <span className="text-muted-foreground">No labels</span>
+                  )}
                 </div>
               </div>
               {selectedContact.notes && (
